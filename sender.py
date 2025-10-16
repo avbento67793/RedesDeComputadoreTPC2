@@ -26,10 +26,40 @@ def waitForAck( s, seg ):
 def tx_thread( s, receiver, windowSize, cond, timeout ):
     # TO DO
     return
-            
 
-def sendBlock( seqNo, fileBytes, s, receiver, windowSize, cond ):  #producer
-    #TO DO
+# Sends the block
+def sendBlock(seqNo, fileBytes, s, receiver, windowSize, cond):
+    # Use the global variables 'window' and 'blocksInWindow'
+    global window, blocksInWindow
+
+    # If the window is full waits (no free space to send new blocks)
+    with cond:
+        while blocksInWindow >= windowSize:
+            print(f"Window full (N={windowSize}). Waiting for ACKs.")
+            cond.wait()
+
+        # Add a new block to the sending window
+        current_time = time.time()
+        entry = {
+            'seq': seqNo,              # sequence number of the block
+            'data': fileBytes,         # file data bytes
+            'sent': True,              # mark as sent
+            'sent_time': current_time  # time when it was sent
+        }
+
+        # Add the new block information to the sending window
+        window.append(entry)
+
+        # Increase the number of blocks currently in the window
+        blocksInWindow += 1
+
+        # Send the datagram to the receiver
+        sendDatagram(seqNo, fileBytes, s, receiver)
+        print(f"Block {seqNo} buffered and sent (Window: {blocksInWindow}/{windowSize}).")
+
+        # Notify tx_thread that a new block was added or sent
+        cond.notify_all()
+
     return
 
 def main(hostname, senderPort, windowSize, timeOutInSec):
