@@ -14,7 +14,58 @@ def sendAck( ackNo, sock, end ):
         sock.sendto( msg, end)
 
 def rx_thread( s, sender, que, bSize):
-    #TO DO
+    # The first expected block sequence number
+    next_seq_expected = 1
+
+    # Define the maximum size of the incoming packet (block + metadata)
+    MAX_PACKET_SIZE = bSize + 128
+
+    while True:
+        try:
+            # Receive a UDP packet from the sender
+            rep, ad = s.recvfrom(MAX_PACKET_SIZE)
+
+            # Deserialize the received packet (should be a tuple)
+            received_data = pickle.loads(rep)
+
+            # Validate packet format: must be a tuple of (block_num, data)
+            if not isinstance(received_data, tuple) or len(received_data) != 2:
+                continue
+
+            # Extract the block number and data payload
+            block_num, data = received_data
+
+            # If this is the expected block
+            if block_num == next_seq_expected:
+                # Put the data in the shared queue for processing
+                que.put(data)
+
+                # If data is empty, it indicates EOF (end of file)
+                if not data:
+                    print("EOF. Ending rx_thread.")
+                    break
+
+                # Send acknowledgment for this block
+                sendAck(block_num, s, sender)
+
+                # Updated to the next expected block
+                next_seq_expected += 1
+
+            else:
+                # If an unexpected block arrives, resend the last valid ACK
+                last_received = next_seq_expected - 1
+                if last_received > 0:
+                    sendAck(last_received, s, sender)
+
+        except timeout:
+            # If no data is received within timeout, retry
+            continue
+
+        except Exception as e:
+            # Handle unexpected errors without crashing the program
+            print(f"Error in rx_thread: {e}")
+            continue
+
     return
     
 def receiveNextBlock( q ):

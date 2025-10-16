@@ -74,8 +74,6 @@ def main(hostname, senderPort, windowSize, timeOutInSec):
 
 if __name__ == "__main__":
     # python sender.py senderPort windowSize timeOutInSec
- 
-
     if len(sys.argv) != 4:
         print("Usage: python sender.py senderPort windowSize timeOutInSec")
     else:
