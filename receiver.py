@@ -15,7 +15,7 @@ def sendAck( ackNo, sock, end ):
 
 def rx_thread( s, sender, que, bSize):
     # The first expected block sequence number
-    next_seq_expected = 1
+    expected_block_number = 1
 
     # Define the maximum size of the incoming packet (block + metadata)
     MAX_PACKET_SIZE = bSize + 128
@@ -36,7 +36,7 @@ def rx_thread( s, sender, que, bSize):
             block_num, data = received_data
 
             # If this is the expected block
-            if block_num == next_seq_expected:
+            if block_num == expected_block_number:
                 # Put the data in the shared queue for processing
                 que.put(data)
 
@@ -49,11 +49,11 @@ def rx_thread( s, sender, que, bSize):
                 sendAck(block_num, s, sender)
 
                 # Updated to the next expected block
-                next_seq_expected += 1
+                expected_block_number += 1
 
             else:
                 # If an unexpected block arrives, resend the last valid ACK
-                last_received = next_seq_expected - 1
+                last_received = expected_block_number - 1
                 if last_received > 0:
                     sendAck(last_received, s, sender)
 
