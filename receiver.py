@@ -99,9 +99,7 @@ def main(sIP, sPort, fNameRemote, fNameLocal, blockSize):
 
     f.close()
     tid.join()
-
-    print("✅ File successfully received and saved.")
-    print(f"📌 Output file: {fNameLocal}")
+    print("File successfully received and saved.")
 
 if __name__ == "__main__":
     if len(sys.argv) != 6:
