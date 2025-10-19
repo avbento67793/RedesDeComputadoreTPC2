@@ -132,6 +132,7 @@ def sendBlock(seqNo, fileBytes, s, receiver, windowSize, cond):
 def main(hostname, senderPort, windowSize, timeOutInSec):
     s = socket( AF_INET, SOCK_DGRAM)
     s.bind((hostname, senderPort))
+    s._done_sending = False  # flag to indicate completion of sending
     # interaction with receiver; no datagram loss
     buf, rem = s.recvfrom( 256 )
     req = pickle.loads( buf)
@@ -173,7 +174,6 @@ def main(hostname, senderPort, windowSize, timeOutInSec):
 
     tid.join()
     print("File transfer completed successfully!")
-
 
 
 if __name__ == "__main__":
