@@ -30,7 +30,7 @@ def rx_thread(s, sender, que, bSize):
 
              # If empty block → end of transfer
             if len(data) == 0:
-                print("[RX] Last block received. Ending thread.")
+                print("[RX] Last block received. Ending rx_thread.")
                 break
 
              # If expected block
