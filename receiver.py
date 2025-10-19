@@ -13,39 +13,37 @@ def sendAck(ackNo, sock, end):
         msg = pickle.dumps(toSend)
         sock.sendto(msg, end)
 
-def rx_thread(s, sender, que, bSize, totalFileSize):
+def rx_thread(s, sender, que, bSize):
     expected_block_number = 1
-    bytes_received = 0
     MAX_PACKET_SIZE = bSize + 128
 
-    while bytes_received < totalFileSize:
+    while True:
         try:
-            rep, ad = s.recvfrom(MAX_PACKET_SIZE)
+            rep, _ = s.recvfrom(MAX_PACKET_SIZE)
             received_data = pickle.loads(rep)
 
-            # Validate packet format
+            # Validate packet 
             if not isinstance(received_data, tuple) or len(received_data) != 2:
                 continue
 
             block_num, data = received_data
 
+             # If empty block → end of transfer
+            if len(data) == 0:
+                print("[RX] Last block received. Ending thread.")
+                break
+
+             # If expected block
             if block_num == expected_block_number:
                 que.put(data)
-                bytes_received += len(data)
-
-                # Send ACK
-                ack = (block_num,)
-                s.sendto(pickle.dumps(ack), sender)
-                print(f"[RX] Received block {block_num} ({bytes_received}/{totalFileSize} bytes)")
-
+                sendAck(block_num, s, sender)
                 expected_block_number += 1
             else:
                 # Out-of-order → resend last ACK
                 last_ack = expected_block_number - 1
                 if last_ack > 0:
-                    ack = (last_ack,)
-                    s.sendto(pickle.dumps(ack), sender)
-                    print(f"[RX] Out-of-order block {block_num}, resent ACK {last_ack}")
+                    sendAck(last_ack, s, sender)
+
 
         except timeout:
             continue

@@ -29,32 +29,38 @@ def tx_thread(s, receiver, windowSize, cond, timeout):
     last_ack = 0
     dup_ack_count = 0
     FAST_RETRANSMIT_THRESHOLD = 2  # duplicate ACK threshold
+    last_seq_sent = 0  # keep track of last sequence number sent
 
     while True:
         with cond:
-            # If window is empty, wait briefly; exit if still empty
+            # If window is empty, wait briefly
             if blocksInWindow == 0:
                 cond.wait(timeout)  # short wait to see if more blocks arrive
                 if blocksInWindow == 0:
+                    # Window is empty and no more blocks → send final zero-length block
+                    if last_seq_sent > 0:
+                        final_block = (last_seq_sent + 1, b"")
+                        msg = pickle.dumps(final_block)
+                        s.sendto(msg, receiver)
+                        print(f"[TX] Sent final zero-length block seq={last_seq_sent + 1}")
                     print("[TX] All data acknowledged, exiting tx_thread.")
                     break
 
-            # Monitor the oldest unacknowledged block for timeout
-            oldest_entry = window[0]
-            time_elapsed = time.monotonic() - oldest_entry['sent_time']
-            time_remaining = timeout - time_elapsed
+            if blocksInWindow > 0:
+                oldest_entry = window[0]
+                time_elapsed = time.monotonic() - oldest_entry['sent_time']
+                time_remaining = timeout - time_elapsed
 
-            # Timeout → retransmit all blocks in window
-            if time_remaining <= 0:
-                print(f"[TIMEOUT] Retransmitting from seq={window[0]['seq']}")
-                
-                for entry in window:
-                    sendDatagram(entry['seq'], entry['data'], s, receiver)
-                    entry['sent_time'] = time.monotonic()
-
-                dup_ack_count = 0
-                cond.notify_all()
-                continue
+                # Timeout → retransmit all blocks in window
+                if time_remaining <= 0:
+                    print(f"[TIMEOUT] Retransmitting from seq={window[0]['seq']}")
+                    for entry in window:
+                        sendDatagram(entry['seq'], entry['data'], s, receiver)
+                        entry['sent_time'] = time.monotonic()
+                        last_seq_sent = max(last_seq_sent, entry['seq'])
+                    dup_ack_count = 0
+                    cond.notify_all()
+                    continue
 
         # Wait for ACK with timeout (non-blocking)
         ack_available = waitForAck(s, max(time_remaining, 0.001))
@@ -87,14 +93,12 @@ def tx_thread(s, receiver, windowSize, cond, timeout):
             elif ack_num == last_ack and last_ack > 0:
                 dup_ack_count += 1
                 print(f"[DUPACK] For {ack_num} ({dup_ack_count}/{FAST_RETRANSMIT_THRESHOLD})")
-                
-                if dup_ack_count >= FAST_RETRANSMIT_THRESHOLD:
-                    print(f"[FAST RETRANSMIT] Retransmitting from seq={oldest_entry['seq']}")
-                    
+                if dup_ack_count >= FAST_RETRANSMIT_THRESHOLD and blocksInWindow > 0:
+                    print(f"[FAST RETRANSMIT] Retransmitting from seq={window[0]['seq']}")
                     for entry in window:
                         sendDatagram(entry['seq'], entry['data'], s, receiver)
                         entry['sent_time'] = time.monotonic()
-                    
+                        last_seq_sent = max(last_seq_sent, entry['seq'])
                     dup_ack_count = 0
                     cond.notify_all()
 
