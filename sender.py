@@ -24,10 +24,6 @@ def waitForAck( s, seg ):
 
 
 def tx_thread(s, receiver, windowSize, cond, timeout):
-    """
-    Handles ACKs, timeouts, and retransmissions using Go-Back-N.
-    Uses only shared variables: window and blocksInWindow.
-    """
     global window, blocksInWindow
 
     last_ack = 0
@@ -170,7 +166,14 @@ def main(hostname, senderPort, windowSize, timeOutInSec):
         else:
             break
     f.close()
+    # notify the tx_thread that no more blocks will be sent
+    with windowCond:
+        s._done_sending = True        # signal the transmission thread that sending is finished
+        windowCond.notify_all()       # wake the thread if it is waiting
+
     tid.join()
+    print("File transfer completed successfully!")
+
 
 
 if __name__ == "__main__":
