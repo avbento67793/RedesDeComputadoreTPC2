@@ -28,80 +28,78 @@ def tx_thread(s, receiver, windowSize, cond, timeout):
 
     last_ack = 0
     dup_ack_count = 0
-    FAST_RETRANSMIT_THRESHOLD = 2  # trigger fast retransmit after 2 duplicate ACKs
+    FAST_RETRANSMIT_THRESHOLD = 2  # duplicate ACK threshold
 
     while True:
-        # --- 1. Timeout and window management (inside condition lock) ---
         with cond:
-            # Stop when all data is acknowledged and sender marked done
-            if blocksInWindow == 0 and getattr(s, "_done_sending", False):
-                print("[TX] All data acknowledged, exiting tx_thread.")
-                break
-
-            # If window is empty, wait for new data or termination signal
+            # If window is empty, wait briefly; exit if still empty
             if blocksInWindow == 0:
-                cond.wait()
-                continue
+                cond.wait(timeout)  # short wait to see if more blocks arrive
+                if blocksInWindow == 0:
+                    print("[TX] All data acknowledged, exiting tx_thread.")
+                    break
 
             # Monitor the oldest unacknowledged block for timeout
             oldest_entry = window[0]
             time_elapsed = time.monotonic() - oldest_entry['sent_time']
             time_remaining = timeout - time_elapsed
 
-            # Timeout → retransmit all unacknowledged blocks (GBN behavior)
+            # Timeout → retransmit all blocks in window
             if time_remaining <= 0:
-                print(f"[TIMEOUT] Retransmitting from seq={oldest_entry['seq']}")
+                print(f"[TIMEOUT] Retransmitting from seq={window[0]['seq']}")
+                
                 for entry in window:
                     sendDatagram(entry['seq'], entry['data'], s, receiver)
                     entry['sent_time'] = time.monotonic()
+
                 dup_ack_count = 0
                 cond.notify_all()
                 continue
 
-        # --- 2. Wait for ACK (outside lock to avoid blocking senders) ---
-        ack_available = waitForAck(s, time_remaining if time_remaining > 0 else 0.001)
+        # Wait for ACK with timeout (non-blocking)
+        ack_available = waitForAck(s, max(time_remaining, 0.001))
         if not ack_available:
             continue
 
         try:
-            # Receive and decode ACK packet
+            # Receive ACK
             rep, _ = s.recvfrom(128)
             ack_tuple = pickle.loads(rep)
             if not isinstance(ack_tuple, tuple) or len(ack_tuple) != 1:
                 continue
             ack_num = ack_tuple[0]
         except Exception as e:
-            print(f"Error in tx_thread: {e}")
+            print(f"[TX] Error receiving ACK: {e}")
             continue
 
-        # --- 3. Process ACK and slide window (inside condition lock) ---
         with cond:
+            # New cumulative ACK → slide window
             if ack_num > last_ack:
-                # Cumulative ACK → slide window forward
                 num_confirmed = ack_num - last_ack
                 window = window[num_confirmed:]
                 blocksInWindow -= num_confirmed
                 last_ack = ack_num
                 dup_ack_count = 0
-
                 print(f"[ACK] Received {ack_num}, window now {blocksInWindow}/{windowSize}")
                 cond.notify_all()
 
+            # Duplicate ACK → may trigger fast retransmit
             elif ack_num == last_ack and last_ack > 0:
-                # Duplicate ACK → may trigger fast retransmit
                 dup_ack_count += 1
                 print(f"[DUPACK] For {ack_num} ({dup_ack_count}/{FAST_RETRANSMIT_THRESHOLD})")
-
+                
                 if dup_ack_count >= FAST_RETRANSMIT_THRESHOLD:
-                    print(f"[FAST RETX] Retransmitting from seq={window[0]['seq']}")
+                    print(f"[FAST RETRANSMIT] Retransmitting from seq={oldest_entry['seq']}")
+                    
                     for entry in window:
                         sendDatagram(entry['seq'], entry['data'], s, receiver)
                         entry['sent_time'] = time.monotonic()
+                    
                     dup_ack_count = 0
                     cond.notify_all()
 
     return
-
+            
 
 def sendBlock(seqNo, fileBytes, s, receiver, windowSize, cond):
     global window, blocksInWindow
@@ -132,7 +130,6 @@ def sendBlock(seqNo, fileBytes, s, receiver, windowSize, cond):
 def main(hostname, senderPort, windowSize, timeOutInSec):
     s = socket( AF_INET, SOCK_DGRAM)
     s.bind((hostname, senderPort))
-    s._done_sending = False  # flag to indicate completion of sending
     # interaction with receiver; no datagram loss
     buf, rem = s.recvfrom( 256 )
     req = pickle.loads( buf)
@@ -167,17 +164,12 @@ def main(hostname, senderPort, windowSize, timeOutInSec):
         else:
             break
     f.close()
-    # notify the tx_thread that no more blocks will be sent
-    with windowCond:
-        s._done_sending = True        # signal the transmission thread that sending is finished
-        windowCond.notify_all()       # wake the thread if it is waiting
-
     tid.join()
-    print("File transfer completed successfully!")
 
 
 if __name__ == "__main__":
     # python sender.py senderPort windowSize timeOutInSec
+ 
     if len(sys.argv) != 4:
         print("Usage: python sender.py senderPort windowSize timeOutInSec")
     else:

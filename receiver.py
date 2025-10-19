@@ -13,20 +13,15 @@ def sendAck(ackNo, sock, end):
         msg = pickle.dumps(toSend)
         sock.sendto(msg, end)
 
-def rx_thread(s, sender, que, bSize):
+def rx_thread(s, sender, que, bSize, totalFileSize):
     expected_block_number = 1
+    bytes_received = 0
     MAX_PACKET_SIZE = bSize + 128
 
-    while True:
+    while bytes_received < totalFileSize:
         try:
-            # Receive UDP packet
             rep, ad = s.recvfrom(MAX_PACKET_SIZE)
             received_data = pickle.loads(rep)
-
-            # Detect FIN message from sender
-            if isinstance(received_data, tuple) and received_data == ("FIN",):
-                print("[RX] FIN received. File transfer completed.")
-                break
 
             # Validate packet format
             if not isinstance(received_data, tuple) or len(received_data) != 2:
@@ -34,19 +29,23 @@ def rx_thread(s, sender, que, bSize):
 
             block_num, data = received_data
 
-            # If this is the expected block
             if block_num == expected_block_number:
                 que.put(data)
+                bytes_received += len(data)
 
-                # Send ACK for correct block
-                sendAck(block_num, s, sender)
+                # Send ACK
+                ack = (block_num,)
+                s.sendto(pickle.dumps(ack), sender)
+                print(f"[RX] Received block {block_num} ({bytes_received}/{totalFileSize} bytes)")
+
                 expected_block_number += 1
-
             else:
-                # Out of order → resend last ACK
-                last_received = expected_block_number - 1
-                if last_received > 0:
-                    sendAck(last_received, s, sender)
+                # Out-of-order → resend last ACK
+                last_ack = expected_block_number - 1
+                if last_ack > 0:
+                    ack = (last_ack,)
+                    s.sendto(pickle.dumps(ack), sender)
+                    print(f"[RX] Out-of-order block {block_num}, resent ACK {last_ack}")
 
         except timeout:
             continue
@@ -57,41 +56,34 @@ def rx_thread(s, sender, que, bSize):
     return
     
 def receiveNextBlock(q):
-    """Returns the next block of data from the queue."""
     return q.get()
 
 def main(sIP, sPort, fNameRemote, fNameLocal, blockSize):
 
-    # Initial request phase (no losses)
-    s = socket(AF_INET, SOCK_DGRAM)
+    s = socket( AF_INET, SOCK_DGRAM)
+    #interact with sender without losses
     request = (fNameRemote, blockSize)
     req = pickle.dumps(request)
     sender = (sIP, sPort)
-
-    print("[MAIN] Sending file request...")
-    s.sendto(req, sender)
-
-    print("[MAIN] Waiting for reply...")
+    print("sending request")
+    s.sendto( req, sender)
+    print("waiting for reply")
     rep, ad = s.recvfrom(128)
     reply = pickle.loads(rep)
-    print(f"[MAIN] Reply received: code={reply[0]} fileSize={reply[1]}")
-
-    if reply[0] != 0:
-        print(f"[MAIN] Remote file '{fNameRemote}' does not exist.")
+    print(f"Received reply: code = {reply[0]} fileSize = {reply[1]}")
+    if reply[0]!=0:
+        print(f'file {fNameRemote} does not exist in sender')
         sys.exit(1)
-
-    # Start data reception (losses possible)
+    #start transfer with data and ack losses
     fileSize = reply[1]
-    q = queue.Queue()
-    tid = threading.Thread(target=rx_thread, args=(s, sender, q, blockSize))
+    q = queue.Queue( )
+    tid = threading.Thread( target=rx_thread, args=(s, sender, q, blockSize))
     tid.start()
-
-    f = open(fNameLocal, 'wb')
+    f = open( fNameLocal, 'wb')
     noBytesRcv = 0
-
     while noBytesRcv < fileSize:
-        print(f"[MAIN] Waiting for next block... Received so far: {noBytesRcv}/{fileSize} bytes")
-        b = receiveNextBlock(q)
+        print(f'Going to receive; noByteRcv={noBytesRcv}')
+        b = receiveNextBlock( q )
         sizeOfBlockReceived = len(b)
         if sizeOfBlockReceived > 0:
             f.write(b)
@@ -99,18 +91,17 @@ def main(sIP, sPort, fNameRemote, fNameLocal, blockSize):
 
     f.close()
     tid.join()
-    print("File successfully received and saved.")
+       
 
 if __name__ == "__main__":
+    # python receiver.py senderIP senderPort fileNameInSender fileNameInReceiver blockSize
     if len(sys.argv) != 6:
         print("Usage: python receiver.py senderIP senderPort fileNameRemote fileNameLocal blockSize")
         sys.exit(1)
-
     senderIP = sys.argv[1]
     senderPort = int(sys.argv[2])
     fileNameRemote = sys.argv[3]
     fileNameLocal = sys.argv[4]
     blockSize = int(sys.argv[5])
-    random.seed(7)
-
-    main(senderIP, senderPort, fileNameRemote, fileNameLocal, blockSize)
+    random.seed( 7 )
+    main( senderIP, senderPort, fileNameRemote, fileNameLocal, blockSize)
